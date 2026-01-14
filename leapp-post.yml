@@ -1,0 +1,90 @@
+---
+- name: Run post upgrade clean up steps
+  hosts: all
+  become: yes
+  tasks:
+
+    - name: Remove leapp packages
+      ansible.builtin.shell: "rpm -qa | grep -i leapp| xargs -n1 rpm -e  --nodeps"
+      ignore_errors: true
+
+    - name: Check if /var/tmp/el7_kernel exists
+      ansible.builtin.stat:
+        path: /var/tmp/el7_kernels
+      register: el7_kernel_file
+
+    - name: Get El7  kernel versions
+      ansible.builtin.shell: "cd /lib/modules && ls -ld *.el7* > /var/tmp/el7_kernels"
+      ignore_errors: true
+      when: not el7_kernel_file.stat.exists
+
+    - name: Remove el7_kernels weak modules
+      ansible.builtin.shell: "cd /lib/modules;for i in `cat /var/tmp/el7_kernels`; do echo $i; [ -x /usr/sbin/weak-modules ] && /usr/sbin/weak-modules --remove-kernel $i; done"
+      ignore_errors: true
+      when: not el7_kernel_file.stat.exists
+
+    - name: Remove el7_kernels 
+      ansible.builtin.shell: "for i in `cat /var/tmp/el7_kernels`; do  /bin/kernel-install remove $i /lib/modules/$i/vmlinuz; done"
+      ignore_errors: true
+      when: not el7_kernel_file.stat.exists
+
+    - name: Get list of EL7 packages to remove
+      ansible.builtin.shell: "rpm -qa | grep -e '.el[67]' | grep -vE '^(gpg-pubkey|libmodulemd|katello-ca-consumer)' | sort"
+      register: rpm_packages_to_remove
+
+    - name: Remove EL7 packages
+      ansible.builtin.yum:
+        name: "{{ item }}"
+        state: absent
+      with_items: "{{ rpm_packages_to_remove.stdout_lines }}"
+      become: yes
+
+    - name: Find directories matching *el7* in /lib/modules
+      ansible.builtin.find:
+        paths: "/lib/modules"
+        patterns: "*el7*"
+        recurse: yes
+        file_type: directory
+      register: found_directories
+
+    - name: Remove found directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      with_items: "{{ found_directories.files }}"
+
+    - name: Remove directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - /var/log/leapp
+        - /root/tmp_leapp_py3
+        - /var/lib/leap
+
+    - name: Remove rescue kernel files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/boot/vmlinuz-*rescue*"
+        - "/boot/initramfs-*rescue*"
+
+    - name: Reinstall rescue kernel and related initial RAM disk
+      ansible.builtin.shell: /usr/lib/kernel/install.d/51-dracut-rescue.install add "$(uname -r)" /boot "/boot/vmlinuz-$(uname -r)"
+
+    - name: Reinstall kernel-core
+      ansible.builtin.shell: "dnf reinstall -y kernel-core-$(uname -r)"
+
+    - name: Check initramfs contents
+      ansible.builtin.shell: "lsinitrd /boot/initramfs-*rescue*.img | grep -qm1 '$(uname -r)/kernel/' && echo 'OK' || echo 'FAIL'"
+      register: initramfs_check
+      ignore_errors: yes 
+
+    - name: Display result
+      ansible.builtin.debug:
+        msg: "{{ 'OK' if initramfs_check.rc == 0 else 'FAIL' }}"
+
+    - name: check if old kernels are present or not
+      ansible.builtin.shell: 'grubby --info=ALL | grep "\.el7" || echo "Old kernels are not present in the bootloader"'
+      ignore_errors: yes

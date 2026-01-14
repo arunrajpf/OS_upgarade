@@ -1,0 +1,42 @@
+---
+- name: Check Free Space on /boot
+  hosts: all
+  gather_facts: yes
+  become: yes
+
+  tasks:
+    - name: Get /boot free space
+      ansible.builtin.shell:
+        cmd: df -m /boot | awk 'NR==2 {print $4}'
+      register: boot_space
+
+    - name: Print /boot free space in MB
+      ansible.builtin.debug:
+        msg: "Free space on /boot: {{ boot_space.stdout }} MB"
+    
+    - name: Check /boot free space condition
+      ansible.builtin.assert:
+        that: 
+          - boot_space.stdout | int >= 100
+        fail_msg: "Not satisfied - /boot has less than 100MB free space"
+        success_msg: "Condition satisfied - /boot has 100MB or more free space"
+
+    #- name: Read ppstie_host_metadata.yml
+      #include_vars:
+        #file: /etc/ppstie_host_metadata.yml
+        #name: metadata
+ 
+    #- name: Print patch version
+      #debug:
+        #var: metadata.patch_version
+
+    #- name: Check if patched version matches
+      #debug:
+        #msg: "Patch version satisfied !"
+      #when: metadata.patch_version == "20231218"
+      
+ 
+    #- name: Check if patch version matches
+      #fail:
+        #msg: "Patch version does not match 20231218!"
+      #when: metadata.patch_version != "20231218"

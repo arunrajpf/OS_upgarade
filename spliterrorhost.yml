@@ -1,0 +1,53 @@
+---
+- name: Capture System Information new
+  hosts: all
+  gather_facts: true
+  become: yes
+  become_user: coreadm
+  tasks:
+    - name: Get hostname
+      shell: hostname
+      register: vname
+
+    #- name: Update server list
+      #command: python3 sai.py
+      #register: updated_url
+      #delegate_to: localhost
+
+    - name: Update server list
+      command: python3 split_servers_final.py
+      register: constructed_urls
+      delegate_to: localhost 
+
+    - name: Debug updated_url
+      debug:
+        var: constructed_urls.stdout_lines
+    
+    - name: Push Rocky post-upgrade-error-log-slpit host validation data to Elasticsearch
+      uri:
+        #url: "{{ item }}"
+        url: "http://rckyels-ho-a1d-519642.sys.comcast.net:9200/rocky-upgrade-errors/_doc/{{ inventory_hostname }}.json"
+        method: POST
+        url_username: "{{ esuser }}"
+        url_password: "{{ espassword }}"
+      
+       
+        body: "{{ lookup('file', 'error-' + inventory_hostname + '.json') }}"
+     
+       
+        body_format: json
+        headers:
+          Content-Type: "application/json"
+        status_code: [200, 201]
+        validate_certs: no  # Optional: Set to yes if you want to validate SSL certificates
+      delegate_to: localhost
+      register: response_posterror
+      with_items: "{{ constructed_urls.stdout_lines }}"
+      when: inventory_hostname in item
+      #when: item | regex_search('http') 
+     
+
+    - name: Print posterror-spllithost-upgrade response
+      debug:
+        var: response_posterror
+      delegate_to: localhost

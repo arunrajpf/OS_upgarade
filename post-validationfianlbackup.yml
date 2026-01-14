@@ -1,0 +1,209 @@
+---
+- name: Capture System Information
+  hosts: all
+  gather_facts: true
+  become: yes
+  become_user: coreadm
+  tasks:
+    - name: Get hostname
+      shell: hostname
+      register: vname
+
+    - name: Create directory "rocky" with specific owner, group, and permissions
+      file:
+        path: "/tmp/rocky"
+        state: directory
+        owner: coreadm
+        group: coreadm
+        mode: "0777"
+
+    - name: Get tcp_keepalive_time
+      shell: "cat /etc/sysctl.conf | grep -E '^net.ipv4.tcp_keepalive_time=' | awk -F'=' '{print $2}' || true"
+      register: tcp_keepalive_time
+      failed_when: false
+
+    - name: Get app size
+      shell: df -h /app | grep "/app" | awk '{print $2}'
+      register: app_size
+
+    - name: Get swap information
+      shell: free -g | grep -i "swap" | awk '{print $1, $2, $3, $4, $5, $6}'
+      register: swap
+
+    - name: Get gpgcheck
+      shell: cat /etc/yum.conf | grep gpgcheck | awk '{print $2}'
+      register: gpgcheck
+
+    - name: Check if opens-osqueryd service is running
+      shell: systemctl is-active opens-osqueryd
+      register: osqueryd_service_status
+      ignore_errors: true
+
+    - name: Display status
+      debug:
+        msg: "osqueryd is {{ 'running' if osqueryd_service_status.rc == 0 else 'not running' }}"
+
+    - name: Check if uptycs service is running
+      shell: systemctl is-active osquery
+      register: uptycs_service_status
+      ignore_errors: true
+
+    - name: Display status
+      debug:
+        msg: "uptycs is {{ 'running' if uptycs_service_status.rc == 0 else 'not running' }}"
+
+    - name: Get coreadm limits from limits.conf
+      shell: cat /etc/security/limits.conf | grep -i "coreadm"
+      register: coreadm_limits_conf
+
+    - name: Get ulimit for open files
+      shell: ulimit -n
+      register: open_files_ulimit
+      become_user: coreadm
+
+    - name: Get ulimit for max user processes
+      shell: ulimit -u
+      register: max_user_processes_ulimit
+      become_user: coreadm
+
+    - name: Get kernel version
+      shell: uname -r
+      register: kernal
+
+    - name: Get OS release information
+      #shell: cat /etc/os-release | grep -E 'ID=|VERSION_ID=' | grep -v 'PLATFORM_ID'
+      shell: cat /etc/redhat-release
+      register: os_release
+
+    - name: Check if "jump" exists in /usr/local/bin
+      shell: ls /usr/local/bin | grep "jump"
+      register: jump
+
+    - name: Check if "vault" exists in /usr/local/sbin
+      shell: ls /usr/local/sbin | grep "vault" || true
+      register: vault
+
+    - name: Capture mount information
+      shell: ls -l /home | grep '^d' | awk '{print $3}' | tr '\n' ' '
+      register: home_users   
+
+    - name: Get root partition size
+      shell: df -h /root | tail -n 1 | awk '{print $2}'
+      register: root_size
+    
+    - name: mount
+      shell: df -h | awk '{print $1, $6}' | tr '\n' ' '
+      register: mount_info
+
+    - name: Get current date and time
+      ansible.builtin.set_fact:
+        current_date_time: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+
+    - name: Get current date and time
+      ansible.builtin.set_fact:
+        current_date_time: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+
+    - name: Get current time zone
+      ansible.builtin.set_fact:
+        current_time_zone: "{{ lookup('pipe', 'date -u +%Z') }}"
+    
+    - name: Write output to JSON file new
+      copy:
+        dest: "/tmp/rocky/post-{{ vname.stdout }}.json"
+        content: |
+          {
+            "pre-vname": "{{ vname.stdout | default('') | to_json | regex_replace('\"', '') }}",
+            "post_upgrade": {
+              "tcp_keepalive_time": "{{ tcp_keepalive_time.stdout | default('') | to_json | regex_replace('\"', '') }}",
+              "app_size": "{{ app_size.stdout | default('') | to_json | regex_replace('\"', '') }}",
+              "swap": "{{ swap.stdout | default('') | to_json | regex_replace('\"', '') }}",
+              "gpgcheck": "{{ gpgcheck.stdout | default('') | to_json | regex_replace('\"', '') }}",
+              "coreadm_limits_conf": "{{ coreadm_limits_conf.stdout | default('') | to_json | regex_replace('\"', '') }}",
+              "open_files_ulimit": "{{ open_files_ulimit.stdout | default('') | to_json | regex_replace('\"', '') }}",
+              "max_user_processes_ulimit": "{{ max_user_processes_ulimit.stdout | default('') | to_json | regex_replace('\"', '') }}",
+              "kernel": "{{ kernal.stdout | default('') | to_json | regex_replace('\"', '') }}",
+              "os-release": "{{ os_release.stdout | default('') | regex_replace('\"', '') }}",
+              "jump": "{{ 'yes' if jump.stdout else 'no' }}",
+              "vault": "{{ 'yes' if vault.stdout else 'no' }}",
+              "root_size": "{{ root_size.stdout | default('') | to_json | regex_replace('\"', '') }}",
+              "pre-opens": "{{ 'yes' if osqueryd_service_status.stdout == 'active' else 'no' }}",
+              "pre-uptycs": "{{ 'yes' if uptycs_service_status.stdout == 'active' else 'no' }}",
+              "mount_info": "{{ mount_info.stdout | default('') | to_json | regex_replace('\"', '') }}",
+              "home_users": "{{ home_users.stdout | default('') | to_json | regex_replace('\"', '') }}"
+           },
+           "timestamp": "{{ current_date_time }}"
+          }
+    
+    - name: Set full permissions for the JSON file
+      file:
+        path: "/tmp/rocky/post-{{ vname.stdout }}.json"
+        mode: "0777"
+        owner: coreadm
+        group: coreadm
+        
+    #- name: Merge JSON files with .json extension
+      #shell: cat /tmp/rocky/*.json > /tmp/rocky/merged-{{ vname.stdout }}.json
+      
+
+    - name: Fetch *.json files to local path
+      find:
+        paths: /tmp/rocky/
+        recurse: yes
+        #patterns: 'merged-*.json'
+        patterns: 
+          - 'pre*.json'
+          - 'post*.json'
+      register: json_files
+
+    - debug:
+        msg: "{{ json_files }}"
+
+    - name: Fetch results.json from target servers
+      fetch:
+        src: "{{ item.path }}"
+        dest: "{{ WORKSPACE }}/"      
+        flat: yes
+        fail_on_missing: no
+      with_items: "{{ json_files.files }}"
+
+    - name: Push Rocky pre-upgrade validation data to Elasticsearch
+      uri:
+        url: "http://rckyels-ho-a1d-519642.sys.comcast.net:9200/pre-upgrade-rocky/_doc/{{ inventory_hostname }}"
+        method: POST
+        #user: "{{elastic_user}}"
+        user: elastic
+        #password: "{{elastic_password}}"
+        password: El@st1c#2025
+        body: "{{ lookup('file', 'pre-' + inventory_hostname + '.json') }}"
+        body_format: json
+        headers:
+          Content-Type: "application/json"
+        status_code: [200, 201]
+        validate_certs: no
+      delegate_to: localhost
+      register: response_pre
+
+    - name: Print pre-upgrade response
+      debug:
+        var: response_pre
+      delegate_to: localhost 
+
+    - name: Push Rocky post-upgrade validation data to Elasticsearch
+      uri:
+        url: "http://rckyels-ho-a1d-519642.sys.comcast.net:9200/post-upgrade-rocky/_doc/{{ inventory_hostname }}"
+        method: POST
+        user: elastic
+        password: El@st1c#2025
+        body: "{{ lookup('file', 'post-' + inventory_hostname + '.json') }}"
+        body_format: json
+        headers:
+          Content-Type: "application/json"
+        status_code: [200, 201]
+        validate_certs: no
+      delegate_to: localhost
+      register: response_post
+
+    - name: Print post-upgrade response
+      debug:
+        var: response_post
+      delegate_to: localhost

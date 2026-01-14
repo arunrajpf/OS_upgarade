@@ -1,0 +1,118 @@
+---
+- name: Run Pre-upgrade on RHEL 7
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Install leapp-upgrade
+      ansible.builtin.yum:
+        name: leapp-upgrade
+        state: present
+
+    - name: Remove RHEL7 Packages
+      ansible.builtin.yum:
+        name:
+          - hostmon-config-default
+          - eracent-clients
+          - cada-client-rh7-rsa
+          - atlas-client
+          - amsd
+          - falcon-sensor
+          - gpg-pubkey
+          - hp-health
+          - hponcfg
+          - ilorest
+          - pam_radius
+          - perl-neto-io-Date-Manip
+          - perl-neto-io-IO-Multiplex
+          - perl-neto-io-JSON
+          - perl-neto-io-Log-Dispatch
+          - perl-neto-io-Log-Dispatch-Filerotate
+          - perl-neto-io-Log-Log4perl
+          - perl-neto-io-MIME-Lite
+          - perl-neto-io-Mail-Sender
+          - perl-neto-io-Mail-Sendmail
+          - perl-neto-io-Net-Server
+          - perl-neto-io-Params-Validate
+          - perl-neto-io-Time-ParseDate
+          - perl-neto-io-TimeDate
+          - perl-neto-io-XML-NamespaceSupport
+          - perl-neto-io-XML-SAX
+          - perl-neto-io-XML-Simple
+          - perl-neto-io-perl-MailTools
+          - python2-pip
+          - ssacli
+          - ssaducli
+          - telegraf
+        state: absent
+        update_cache: true
+
+# https://access.redhat.com/solutions/6988034 issue with cloud-init services
+    - name: Disable Cloud Init Services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+        masked: true
+      loop:
+        - cloud-init
+        - cloud-config
+        - cloud-final
+        - cloud-init-local.service
+      ignore_errors: true
+
+# https://access.redhat.com/solutions/6988034 issue with cloud-init services
+    - name: Disable Cloud Init Local Service
+      ansible.builtin.systemd:
+        name: cloud-init-local.service
+        state: stopped
+        enabled: false
+      ignore_errors: true
+
+    - name: Remove python36-* packages
+      become: yes
+      yum:
+        name: "python36*"
+        state: absent
+      ignore_errors: true
+
+    - name: Create Backup directory
+      ansible.builtin.file:
+        path: /root/yum_existing_repos_backup
+        state: directory
+        mode: "0755"
+
+    - name: Move RHEL7 repos to backup directory
+      ansible.builtin.shell: mv /etc/yum.repos.d/* /root/yum_existing_repos_backup
+
+    - name: Add RHEL 8 repository
+      ansible.builtin.template:
+       src: "{{ item.src }}"
+       dest: "{{ item.dest }}"
+       owner: root
+       group: root
+       mode: "0644"
+      loop:
+        - { src: 'ppstie-rhel8_appstream-x86_64-2022-11-28.j2', dest: '/etc/yum.repos.d/ppstie-rhel8_appstream-x86_64-2022-11-28.repo'}
+        - { src: 'ppstie-rhel8_baseos-x86_64-2022-11-28.j2', dest: '/etc/yum.repos.d/ppstie-rhel8_baseos-x86_64-2022-11-28.repo'}
+
+    - name: Remove mptctl Kernel Module
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: absent
+      loop:
+        - mptctl
+        - pata_acpi
+        - floppy
+
+    - name: Run the leapp preupgrade
+      ansible.builtin.shell: "leapp preupgrade --enablerepo  ppstie-rhel8_baseos-x86_64-2022-11-28 --enablerepo  ppstie-rhel8_appstream-x86_64-2022-11-28 --no-rhsm"
+      ignore_errors: true
+      register: leapp_preupgrade
+
+    - name: Run standard preupgrade fixes
+      ansible.builtin.shell: "{{ item }}"
+      loop:
+        - leapp answer --section remove_pam_krb5_module_check.confirm=True
+        - leapp answer --section remove_pam_pkcs11_module_check.confirm=True
+        - echo PermitRootLogin yes | tee -a /etc/ssh/sshd_config

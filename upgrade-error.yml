@@ -1,0 +1,33 @@
+---
+- name: Capture System Information new
+  hosts: all
+  gather_facts: true
+  become: yes
+  become_user: coreadm
+  tasks:
+    - name: Get hostname
+      shell: hostname
+      register: vname
+    - name: Push Rocky post-upgrade-error-log validation data to Elasticsearch
+      uri:
+        url: "http://rckyels-ho-a1d-519642.sys.comcast.net:9200/rocky-upgrade-errors/_doc/{{ ansible_date_time.date }}_{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}"
+        method: POST
+        url_username: "{{ esuser }}"
+        url_password: "{{ espassword }}"
+        body: "{{ lookup('file', 'error-' + ansible_date_time.date + '.json') }}"
+        body_format: json
+        headers:
+          Content-Type: "application/json"
+        status_code: [200, 201]
+        validate_certs: no  # Optional: Set to yes if you want to validate SSL certificates
+      delegate_to: localhost
+      register: response_posterror
+        
+
+
+
+
+    - name: Print posterror-upgrade response
+      debug:
+        var: response_posterror
+      delegate_to: localhost   

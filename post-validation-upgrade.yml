@@ -1,0 +1,164 @@
+---
+- name: System Cleanup and Kernel Maintenance
+  hosts: all
+  become: true
+  become: yes
+  tasks:
+    #- name: Remove yum exclusions
+      #command: "yum config-manager --save --setopt exclude=''"
+      
+    #- name: set python
+      #command: alternatives --set python /usr/bin/python3
+   
+
+    #- name: List leftover el7 packages
+      #shell: "rpm -qa | grep -e \\.el[67] | grep -vE '^(gpg-pubkey|libmodulemd|katello-ca-consumer)' | sort"
+      #register: leftover_packages
+
+    #- name: Remove leftover packages
+      #yum:
+        #name: "{{ leftover_packages.stdout_lines }}"
+        #state: absent
+      #when: leftover_packages.stdout_lines | length > 0
+
+    #- name: List old kernel directory entries
+      #shell: "ls -d /lib/modules/*.el7*"
+      #register: old_kernel_entries
+      #ignore_errors: yes
+
+    #- name: Debug old_kernel_entries
+      #debug:
+        #var: old_kernel_entries.stdout_lines
+
+    #- name: Remove old kernel versions
+      #shell: "/bin/kernel-install remove {{ item }} /lib/modules/{{ item }}/vmlinuz"
+      #with_items: "{{ old_kernel_entries.stdout_lines | map('regex_replace', '.*/([0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+\\.[0-9]+\\.[0-9]+\\.el7\\.[a-zA-Z0-9_]+)', '\\1') | list }}"
+
+    #- name: Run grubby command
+      #command: "grubby --info=ALL | grep '\\.el7'"
+      #register: grubby_output
+      #ignore_errors: true
+
+    #- name: Display output or a message
+      #debug:
+        #msg: "{{ grubby_output.stdout_lines if grubby_output.rc == 0 else 'Old kernels are not present in the bootloader.' }}"
+
+    #- name: Cleanup old kernels and related files
+      #command: "find /lib/modules -maxdepth 1 -type d -name '*.el7*' -exec rm -rf {} +"
+      #register: kernel_cleanup_result
+   
+    - name: Remove existing vmlinuz rescue kernel
+      become: yes
+      shell: "rm -rf /boot/vmlinuz-*rescue*"
+      ####args:
+        #####warn: false  
+
+    - name: Remove existing init rescue kernel
+      shell: "rm -rf /boot/initramfs-*rescue*"
+      become: yes
+    
+    - name: Execute uname -r command
+      shell: uname -r
+      register: shell_command
+      become: yes
+      
+    - name: debug
+      debug:
+        var: shell_command
+
+    - name: Add rescue kernel using dracut
+      become: yes
+      shell: "/usr/lib/kernel/install.d/51-dracut-rescue.install add {{ ansible_kernel }} /boot /boot/vmlinuz-{{ ansible_kernel }}"
+
+    - name: Introduce delay after the command
+      command: sleep 100
+      
+    #- name: new Final reboot
+    #  command: "reboot"
+    #  async: 0
+    #  poll: 300
+    #  retries: 3
+    #  delay: 60
+    #  register: reboot_result
+
+
+    #- name: Wait for the machine to come back up after reboot
+    #  ansible.builtin.wait_for_connection:
+    #    delay: 60
+    #    timeout: 300 
+      #become: false
+     # when: reboot_result.rc == 0
+
+    #- name: Wait for the machine to come back up after reboot
+    #  ansible.builtin.wait_for:
+    #    host: "{{ inventory_hostname }}"
+    #    port: 22
+    #    state: started
+    #    delay: 120
+    #    timeout: 400
+    #  become: false
+    #  retries: 10
+    #  delay: 60
+
+    
+    #- name: Wait for the machine to have a stable uptime
+     # ansible.builtin.wait_for:
+     #   host: "{{ inventory_hostname }}"
+     #   port: 22
+     #   state: started
+     #   delay: 30
+     #   timeout: 300
+     # become: false
+
+    #- name: Get current date and time
+    #  command: "date '+%Y%m%d%H%M%S'"
+    #  register: current_time
+
+    #- name: Backup file with timestamp
+      #copy:
+        #src: "/etc/ssh/sshd_config"
+        #dest: "/etc/ssh/sshd_config_backup_{{ current_time.stdout }}"  # Replace .ext with the file extension if necessary
+      #when: current_time.stdout is defined
+
+    - name: create a rocky user
+      shell: useradd -m rocky
+      ignore_errors: true
+    
+    - name: update the authorized principle as centos user
+      command: cp --archive /etc/ssh/authorized_principals/cloud-user /etc/ssh/authorized_principals/rocky
+
+
+    - name: Copy a file to remote server
+      copy:
+        src: files/userupdate.py  # Replace with the path to the file on the controller
+        dest: /tmp/userupdate.py  # Replace with the destination path on the remote servers
+        mode: '0644'  # Optional: Set the permissions of the file 
+        
+    - name: update sshd_config with python to add rocky user
+      become: yes
+      shell: python3 /tmp/userupdate.py
+
+
+    - name: Add sudoers rule for rocky
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers.d/90-cloud-init-users
+        line: 'rocky ALL=(ALL) NOPASSWD:ALL'
+        state: present
+        validate: '/usr/sbin/visudo -cf %s'
+        backup: yes
+    
+    - name: restart sshd process
+      become: yes
+      service:
+        name: sshd
+        state: restarted
+    
+    - name: Print uptime
+      command: "uptime"
+      register: uptime_result
+
+    - name: Display uptime
+      debug:
+        var: uptime_result.stdout
+
+        

@@ -1,0 +1,82 @@
+---
+- name: Leapp Upgrade from RHEL 7 to RHEL 8 
+  hosts: all
+  become: yes
+  become_method: sudo
+  become_flags: '-i'
+  tasks:
+
+    #- name: Run the leapp upgrade
+      #ansible.builtin.shell: "leapp upgrade --enablerepo  ppstie-rhel8_baseos-x86_64-2022-11-28 --enablerepo  ppstie-rhel8_appstream-x86_64-2022-11-28 --no-rhsm"
+      #register: leapp_upgrade
+
+    - name: Capture list of i686 packages
+      shell: "rpm -qa | grep i686"
+      register: i686_packages
+      ignore_errors: true
+
+    - name: Remove i686 packages
+      shell: "yum remove -y {{ item }}"
+      with_items: "{{ i686_packages.stdout_lines }}"
+      ignore_errors: true
+
+    - name: Run the leapp upgrade
+      ansible.builtin.shell: "leapp upgrade --enablerepo  ppstie-rhel8_baseos-x86_64-2022-11-28 --enablerepo  ppstie-rhel8_appstream-x86_64-2022-11-28 --no-rhsm"
+      register: leapp_upgrade  
+      failed_when: leapp_upgrade.rc != 0
+
+     
+
+    - name: Reboot post upgrade
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ patch_reboot_timeout | default(5000) }}"
+
+    - name: Set new python interpreter
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: /usr/bin/python3
+
+    - name: Check if cloud.cfg exists
+      ansible.builtin.stat:
+        path: /etc/cloud/cloud.cfg
+      register: cloud_cfg_stat
+      ignore_errors: true
+      
+    - name: Replace values in the configuration file
+      ansible.builtin.replace:
+        path: /etc/cloud/cloud.cfg
+        regexp: "{{ item.regexp }}"
+        replace: "{{ item.replace }}"
+      loop:
+        - { regexp: '^ssh_genkeytypes:.*$', replace: "ssh_genkeytypes: ['rsa', 'ecdsa', 'ed25519']" }
+        - { regexp: '^ssh_deletekeys:.*$', replace: 'ssh_deletekeys: 0' }
+      when: cloud_cfg_stat.stat.exists
+
+    - name: Manage cloud services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+        masked: false
+      loop:
+        - cloud-init
+        - cloud-config
+        - cloud-final
+        - cloud-init-local.service
+      ignore_errors: true
+    
+    - name: Check release version
+      #ansible.builtin.shell: "cat /etc/redhat-release"
+      ansible.builtin.shell: "cat /etc/redhat-release | sed 's/\\.7 (Ootpa)//'"
+      
+      register: release_output
+
+    - name: Proceed further if release matches
+      ansible.builtin.debug:
+        msg: "Proceeding further."
+      when: "'Red Hat Enterprise Linux release 8' in release_output.stdout"
+
+    - name: Fail if release does not match
+      ansible.builtin.fail:
+        msg: "The release version does not match. Exiting."
+      when: "'Red Hat Enterprise Linux release 8' not in release_output.stdout"
+  

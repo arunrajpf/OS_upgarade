@@ -1,0 +1,37 @@
+---
+- name: Linux System Information
+  hosts: all
+  become: yes
+  tasks:
+    - name: Check if coreadm user is present
+      shell: "coreadm | grep your_user"
+      register: coreadm_user_check
+      ignore_errors: true
+
+    - name: Display fdisk output
+      shell: "fdisk -l"
+      register: fdisk_output
+
+    - name: Get memory information
+      vars:
+        use_free_command: true  # Set to false if you want to use swapon --show
+      shell: "{{ 'free -m' if use_free_command else 'swapon --show' }}"
+      register: memory_output
+
+    - name: Display last 15 lines of limits.conf
+      shell: "tail -n 15 /etc/security/limits.conf"
+      register: limits_conf_output
+
+    - name: Display Results
+      debug:
+        msg: |
+          Coreadm user present: {{ 'Yes' if coreadm_user_check.rc == 0 else 'No' }}
+          
+          Fdisk output:
+          {{ fdisk_output.stdout }}
+          
+          Memory Information:
+          {{ memory_output.stdout }}
+          
+          Last 15 lines of limits.conf:
+          {{ limits_conf_output.stdout }}
